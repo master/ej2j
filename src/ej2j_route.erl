@@ -3,7 +3,7 @@
 
 -module(ej2j_route).
 
--export([init/0, add_entry/2, get_entry/2, get_route/3]).
+-export([init/0, add/2, get/3, del/2]).
 
 -export_type([route_db/0]).
 
@@ -13,50 +13,65 @@
 
 -include("ej2j.hrl").
 
--type route_db() :: list().
+-type route_db() :: ets:tid().
 
 -spec init() -> route_db().
 init() ->
-    [].
+    ets:new('route', [bag]).
 
--spec add_entry(route_db(), tuple()) -> route_db().
-add_entry(Routes, {OwnerJID, ForeignJID, ClientSession, ServerSession}) ->
-    Route1 = {exmpp_jid:to_list(OwnerJID), ForeignJID, {client, ClientSession}},
-    Route2 = {exmpp_jid:to_list(ForeignJID), OwnerJID, {server, ServerSession}},
-    Route3 = {exmpp_jid:bare_to_list(OwnerJID), exmpp_jid:bare(ForeignJID), {client, ClientSession}},
-    Route4 = {exmpp_jid:bare_to_list(ForeignJID), exmpp_jid:bare(OwnerJID), {server, ServerSession}},
-    [Route4|[Route3|[Route2|[Route1|Routes]]]].
+-spec add(route_db(), tuple()) -> route_db().
+add(Routes, {OwnerJID, ForeignJID, ClientSession, ServerSession}) ->
+    Ref = make_ref(),
+    ets:insert(Routes, {exmpp_jid:to_list(OwnerJID), ForeignJID, {client, ClientSession}, Ref}),
+    ets:insert(Routes, {exmpp_jid:to_list(ForeignJID), OwnerJID, {server, ServerSession}, Ref}),
+    ets:insert(Routes, {exmpp_jid:bare_to_list(OwnerJID), exmpp_jid:bare(ForeignJID), {client, ClientSession}, Ref}),
+    ets:insert(Routes, {exmpp_jid:bare_to_list(ForeignJID), exmpp_jid:bare(OwnerJID), {server, ServerSession}, Ref}),
+    Routes.
 
--spec get_entry(route_db(), any()) -> any() | false.
-get_entry(Routes, JID) ->
-    lists:keyfind(exmpp_jid:to_list(JID), 1, Routes).
+-spec get_entry(route_db(), any()) -> list().
+get_entry(Routes, Key) when is_list(Key) ->
+    ets:lookup(Routes, Key).
 
--spec get_route(route_db(), any(), any()) -> tuple() | false.
-get_route(Routes, From, To) when From == To ->
-    case get_entry(Routes, From) of	
-	{_From, NewJID, Route} -> {Route, NewJID, NewJID};
-	false -> 
-	    case get_entry(Routes, To) of
-		{_To, NewJID, Route} -> {Route, NewJID, NewJID};
-		false -> false
-	    end
-    end;
+-spec del(route_db(), any()) -> route_db().
+del(Routes, Key) when is_list(Key) ->
+    Refs = lists:flatten(ets:match(Routes, {Key, '_', '_', '$1'})),    
+    del_entry(Routes, Refs);
+del(Routes, Key) when is_pid(Key) ->
+    Refs = lists:flatten(ets:match(Routes, {'_', '_', {client, Key}, '$1'})),
+    del_entry(Routes, Refs).
 
-get_route(Routes, From, To) ->
-    case get_entry(Routes, From) of
-    	{_From, NewFrom, Route} ->
-	    [Node, Domain] = string:tokens(exmpp_jid:node_as_list(To), "%"),
-	    Resource = exmpp_jid:resource_as_list(To),
-	    NewTo = exmpp_jid:make(Node, Domain, Resource),
-	    {Route, NewFrom, NewTo};
-	false -> 
-	    case get_entry(Routes, To) of
-		{_To, NewTo, Route} ->
-		    Node = string:join([exmpp_jid:node_as_list(From), exmpp_jid:domain_as_list(From)], "%"),
-		    Domain = ?COMPONENT,
-		    Resource = exmpp_jid:resource_as_list(From),
-		    NewFrom = exmpp_jid:make(Node, Domain, Resource),
-		    {Route, NewFrom, NewTo};
-		false -> false
-	    end
-    end.
+-spec del_entry(route_db(), list()) -> route_db().
+del_entry(Routes, [Key|Keys]) when is_reference(Key) ->
+    ets:match_delete(Routes, {'_', '_', '_', Key}),
+    del_entry(Routes, Keys);
+del_entry(Routes, []) ->
+    Routes.
+
+-spec make(list(), any(), any(), list(), list(), list()) -> list().
+make([Record|Tail], From, To, FromStr, ToStr, Acc) ->
+    NewAcc = case Record of
+                 {_JID, NewJID, Route, _Ref} when From == To ->
+                     [{Route, NewJID, NewJID}|Acc];            
+                 {FromStr, NewFrom, Route, _Ref} -> 
+                     [Node, Domain] = string:tokens(exmpp_jid:node_as_list(To), "%"),
+                     Resource = exmpp_jid:resource_as_list(To),
+                     NewTo = exmpp_jid:make(Node, Domain, Resource),
+                     [{Route, NewFrom, NewTo}|Acc];
+                 {ToStr, NewTo, Route, _Ref} -> 
+                     Node = string:join([exmpp_jid:node_as_list(From), exmpp_jid:domain_as_list(From)], "%"),
+                     Domain = ?COMPONENT,
+                     Resource = exmpp_jid:resource_as_list(From),
+                     NewFrom = exmpp_jid:make(Node, Domain, Resource),
+                     [{Route, NewFrom, NewTo}|Acc];
+                 _ -> Acc
+             end,
+    make(Tail, From, To, FromStr, ToStr, NewAcc);
+make([], _From, _To, _FromStr, _ToStr, Acc) ->
+    lists:reverse(Acc).
+
+-spec get(route_db(), any(), any()) -> list().
+get(Routes, From, To) ->
+    FromStr = exmpp_jid:to_list(From),
+    ToStr = exmpp_jid:to_list(To),
+    Records = get_entry(Routes, FromStr) ++ get_entry(Routes, ToStr),
+    make(Records, From, To, FromStr, ToStr, []).
