@@ -39,6 +39,7 @@ get_route(FromJID, ToJID) ->
 
 -spec init([]) -> {ok, #state{}}.
 init([]) ->
+    process_flag(trap_exit, true),
     Session = ej2j_helper:component(),
     {ok, #state{session = Session, routes = ej2j_route:init()}}.
 
