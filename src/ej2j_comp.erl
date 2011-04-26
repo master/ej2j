@@ -73,6 +73,10 @@ handle_info(#received_packet{packet_type=Type, raw_packet=Packet}, State) ->
     error_logger:warning_msg("Unknown packet received(~p): ~p~n", [Type, Packet]),
     {noreply, State};
 
+handle_info({'EXIT', Pid, _}, #state{db=DB} = State) ->
+    NewDB = ej2j_route:del(DB, Pid),
+    {noreply, State#state{db = NewDB}};
+
 handle_info(_Msg, State) ->
     {noreply, State}.
 
