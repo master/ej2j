@@ -50,8 +50,7 @@ del_entry(Routes, []) ->
 -spec make(list(), any(), any(), list(), list(), list()) -> list().
 make([Record|Tail], From, To, FromStr, ToStr, Acc) ->
     NewAcc = case Record of
-                 {_JID, NewJID, Route, _Ref} when From == To ->
-                     [{Route, NewJID, NewJID}|Acc];            
+                 {_FromJID, _ToJID, _Route, _Ref} when From == To -> Acc;
                  {FromStr, NewFrom, Route, _Ref} -> 
                      [Node, Domain] = string:tokens(exmpp_jid:node_as_list(To), "%"),
                      Resource = exmpp_jid:resource_as_list(To),

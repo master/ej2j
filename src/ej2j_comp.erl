@@ -16,7 +16,7 @@
 
 -include("ej2j.hrl").
 
--record(state, {session, routes}).
+-record(state, {session, db}).
 
 %% Public API
 
@@ -32,8 +32,8 @@ stop() ->
 start_client(OwnerJID, ForeignJID, Password) ->
     gen_server:call(?MODULE, {start_client, OwnerJID, ForeignJID, Password}).
 
-get_route(FromJID, ToJID) ->
-    gen_server:call(?MODULE, {get_route, FromJID, ToJID}).
+get_routes(FromJID, ToJID) ->
+    gen_server:call(?MODULE, {get_routes, FromJID, ToJID}).
 
 %% gen_server callbacks
 
@@ -41,37 +41,31 @@ get_route(FromJID, ToJID) ->
 init([]) ->
     process_flag(trap_exit, true),
     Session = ej2j_helper:component(),
-    {ok, #state{session = Session, routes = ej2j_route:init()}}.
+    {ok, #state{session = Session, db = ej2j_route:init()}}.
 
 -spec handle_call(any(), any(), #state{}) -> {reply, any(), #state{}} | {stop, any(), any(), #state{}}.
 handle_call(stop, _From, State) ->
     exmpp_component:stop(State#state.session),
     {stop, normal, ok, State};
 
-handle_call({start_client, FromJID, ForeignJID, Password}, _From, #state{routes = Routes, session = ServerSession} = State) ->
+handle_call({start_client, FromJID, ForeignJID, Password}, _From, #state{db=DB, session=ServerS} = State) ->
     try
-	{ToJID, ClientSession} = client_spawn(ForeignJID, Password),
-	NewRoute = {FromJID, ToJID, ClientSession, ServerSession},
-	NewRoutes = ej2j_route:add_entry(Routes, NewRoute),
-	NewState = State#state{routes = NewRoutes},
-	{reply, ClientSession, NewState}
+	{ToJID, ClientS} = client_spawn(ForeignJID, Password),
+	NewDB = ej2j_route:add(DB, {FromJID, ToJID, ClientS, ServerS}),
+	{reply, ClientS, State#state{db = NewDB}}
     catch
 	_Class:_Error -> {reply, false, State}
     end;
 
-handle_call({get_route, FromJID, ToJID}, _From, #state{routes = Routes} = State) ->
-    try
-	Route = ej2j_route:get_route(Routes, FromJID, ToJID),
-	{reply, Route, State}
-    catch
-	_Class:_Error -> {reply, false, State}
-    end;	    
+handle_call({get_routes, FromJID, ToJID}, _From, #state{db=DB} = State) ->
+    Routes = ej2j_route:get(DB, FromJID, ToJID),
+    {reply, Routes, State};
 
 handle_call(_Msg, _From, State) ->
     {reply, unexpected, State}.
 
 -spec handle_info(any(), #state{}) -> {noreply, #state{}}.
-handle_info(#received_packet{} = Packet, #state{session = S} = State) ->
+handle_info(#received_packet{} = Packet, #state{session=S} = State) ->
     spawn_link(fun() -> process_received_packet(S, Packet) end),
     {noreply, State};
 
@@ -115,15 +109,15 @@ process_received_packet(Session, #received_packet{packet_type = 'message'} = Pac
 -spec process_iq(pid(), any(), atom(), #xmlel{}) -> ok.
 process_iq(Session, "get", ?NS_DISCO_INFO, IQ) ->
     Result = exmpp_iq:result(IQ, ej2j_helper:disco_info()),
-    server_send_packet(Session, Result);
+    send_packet(Session, Result);
 
 process_iq(Session, "get", ?NS_DISCO_ITEMS, IQ) ->
     Result = exmpp_iq:result(IQ, exmpp_xml:element(?NS_DISCO_ITEMS, 'query', [], [])),
-    server_send_packet(Session, Result);
+    send_packet(Session, Result);
 
 process_iq(Session, "get", ?NS_INBAND_REGISTER, IQ) ->
     Result = exmpp_iq:result(IQ, ej2j_helper:inband_register()),
-    server_send_packet(Session, Result);
+    send_packet(Session, Result);
 
 process_iq(Session, "set", ?NS_INBAND_REGISTER, IQ) ->
     SenderJID = exmpp_jid:parse(exmpp_stanza:get_sender(IQ)),
@@ -132,12 +126,12 @@ process_iq(Session, "set", ?NS_INBAND_REGISTER, IQ) ->
 	JID = ej2j_helper:form_field(Form, <<"jid">>),
 	Password = ej2j_helper:form_field(Form, <<"password">>),
 	UserSession = start_client(SenderJID, JID, Password),
-	client_login(UserSession),
-	client_send_presence(UserSession),
-	server_send_packet(Session, exmpp_iq:result(IQ))
+        exmpp_session:login(UserSession),
+        exmpp_session:send_packet(UserSession, exmpp_presence:set_status(exmpp_presence:available(), undefined)),
+	send_packet(Session, exmpp_iq:result(IQ))
     catch
         _Class:_Error ->
-	    server_send_packet(Session, exmpp_iq:error(IQ, forbidden))
+	    send_packet(Session, exmpp_iq:error(IQ, forbidden))
     end;
 
 process_iq(_Session, _Type, _NS, IQ) ->
@@ -153,43 +147,30 @@ process_message(_Session, Message) ->
 
 -spec process_generic(#xmlel{}) -> ok.
 process_generic(Packet) ->
-    try
-	From = exmpp_jid:parse(exmpp_stanza:get_sender(Packet)),
-	To = exmpp_jid:parse(exmpp_stanza:get_recipient(Packet)),
-	{Session, NewFrom, NewTo} = get_route(From, To),
-	Tmp = exmpp_stanza:set_sender(Packet, NewFrom),
-	NewPacket = exmpp_stanza:set_recipient(Tmp, NewTo),
-	send_packet(Session, NewPacket)
-    catch
-	_Class:_Error -> ok      
-    end.
+    From = exmpp_jid:parse(exmpp_stanza:get_sender(Packet)),
+    To = exmpp_jid:parse(exmpp_stanza:get_recipient(Packet)),
+    Routes = get_routes(From, To),
+    route_packet(Routes, Packet).
+
+-spec route_packet(list(), #xmlel{}) -> ok.
+route_packet([{{client, Session}, NewFrom, NewTo}|Tail], Packet) ->
+    Tmp = exmpp_stanza:set_sender(Packet, NewFrom),
+    NewPacket = exmpp_stanza:set_recipient(Tmp, NewTo),
+    exmpp_session:send_packet(Session, NewPacket),
+    route_packet(Tail, Packet);
+route_packet([{{server, Session}, NewFrom, NewTo}|Tail], Packet) ->
+    Tmp = exmpp_stanza:set_sender(Packet, NewFrom),
+    NewPacket = exmpp_stanza:set_recipient(Tmp, NewTo),
+    send_packet(Session, NewPacket),
+    route_packet(Tail, Packet);    
+route_packet([], _Packet) ->
+    ok.
 
 %% Various helpers
 
--spec send_packet({atom(), pid()}, #xmlel{}) -> ok.
-send_packet({client, Session}, El) ->
-    client_send_packet(Session, El);
-send_packet({server, Session}, El) ->
-    server_send_packet(Session, El).
-
--spec server_send_packet(pid(), #xmlel{}) -> ok.
-server_send_packet(Session, El) ->
+-spec send_packet(pid(), #xmlel{}) -> ok.
+send_packet(Session, El) ->
     exmpp_component:send_packet(Session, El).
-
--spec client_send_packet(pid(), #xmlel{}) -> ok.
-client_send_packet(Session, El) ->
-    exmpp_session:send_packet(Session, El).
-
--spec client_login(pid()) -> ok.
-client_login(Session) ->
-    exmpp_session:login(Session),
-    ok.
-
--spec client_send_presence(pid()) -> ok.
-client_send_presence(Session) ->
-    ComponentName = list_to_binary(ej2j:get_app_env(component_name, ?COMPONENT_NAME)),
-    client_send_packet(Session, exmpp_presence:set_status(exmpp_presence:available(), ComponentName)),
-    ok.
 
 -spec client_spawn(list(), list()) -> {tuple(), pid()} | false.
 client_spawn(JID, Password) ->
