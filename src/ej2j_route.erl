@@ -3,7 +3,7 @@
 
 -module(ej2j_route).
 
--export([init/0, add/2, get/3, del/2]).
+-export([init/0, add/2, get/3, del/2, free/1]).
 
 -export_type([route_db/0]).
 
@@ -18,6 +18,10 @@
 -spec init() -> route_db().
 init() ->
     ets:new('route', [bag]).
+
+-spec free(route_db()) -> ok.
+free(Routes) ->
+    ets:delete(Routes).
 
 -spec add(route_db(), tuple()) -> route_db().
 add(Routes, {OwnerJID, ForeignJID, ClientSession, ServerSession}) ->
