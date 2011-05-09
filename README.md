@@ -4,6 +4,7 @@ INSTALL
 =======
 Configure XMPP server to listen for a component connection with shared secret:
 
+``` erlang
           {listen, [
           ...
           {8888, ejabberd_service, [
@@ -14,9 +15,11 @@ Configure XMPP server to listen for a component connection with shared secret:
                  ]},
           ...
           }
+```
 
 Edit ej2j.config to match your configuration:
 
+``` erlang
           [{ej2j, [
                  {component, "j2j.your.domain"},
                  {component_name, "J2J Transport"},
@@ -24,6 +27,7 @@ Edit ej2j.config to match your configuration:
                  {server_port, 8888},
                  {server_secret, "s3cr3t"}
           ]}].
+```
 
 USAGE
 =====
