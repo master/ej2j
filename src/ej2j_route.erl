@@ -56,10 +56,16 @@ make([Record|Tail], From, To, FromStr, ToStr, Acc) ->
     NewAcc = case Record of
                  {_FromJID, _ToJID, _Route, _Ref} when From == To -> Acc;
                  {FromStr, NewFrom, Route, _Ref} -> 
-                     [Node, Domain] = string:tokens(exmpp_jid:node_as_list(To), "%"),
-                     Resource = exmpp_jid:resource_as_list(To),
-                     NewTo = exmpp_jid:make(Node, Domain, Resource),
-                     [{Route, NewFrom, NewTo}|Acc];
+                     NodeList = exmpp_jid:node_as_list(To),
+                     case string:chr(NodeList, $%) of
+                         0 ->
+                             Acc;
+                         _Else  ->
+                             [Node, Domain] = string:tokens(NodeList, "%"),
+                             Resource = exmpp_jid:resource_as_list(To),
+                             NewTo = exmpp_jid:make(Node, Domain, Resource),
+                             [{Route, NewFrom, NewTo}|Acc]
+                     end;
                  {ToStr, NewTo, Route, _Ref} -> 
                      Node = string:join([exmpp_jid:node_as_list(From), exmpp_jid:domain_as_list(From)], "%"),
                      Domain = ?COMPONENT,

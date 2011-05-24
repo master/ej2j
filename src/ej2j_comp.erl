@@ -13,6 +13,7 @@
 -include_lib("exmpp/include/exmpp_client.hrl").
 -include_lib("exmpp/include/exmpp_xml.hrl").
 -include_lib("exmpp/include/exmpp_nss.hrl").
+-include_lib("exmpp/include/exmpp_jid.hrl").
 
 -include("ej2j.hrl").
 
@@ -119,6 +120,25 @@ process_iq(Session, "get", ?NS_DISCO_ITEMS, IQ) ->
     Result = exmpp_iq:result(IQ, exmpp_xml:element(?NS_DISCO_ITEMS, 'query', [], [])),
     send_packet(Session, Result);
 
+process_iq(_Session, _Type, ?NS_ROSTER, IQ) ->
+    Roster = exmpp_xml:get_element_by_ns(IQ, 'jabber:iq:roster'),
+    Items = exmpp_xml:get_elements(Roster, 'item'),
+    ModItems = lists:map(fun(X) -> Jid = exmpp_jid:parse(exmpp_xml:get_attribute(X, <<"jid">>, "")), 
+               exmpp_xml:element(?NS_ROSTER, 'item', [
+               exmpp_xml:attribute(<<"jid">>,
+                    case string:chr(exmpp_jid:prep_to_list(Jid), $%) of
+                       0 ->
+                         binary:list_to_bin(exmpp_jid:node_as_list(Jid) ++ "%" ++ exmpp_jid:domain_as_list(Jid) ++ "@" ++ 
+                            ej2j:get_app_env(component, ?COMPONENT));
+                       _Else ->
+                         exmpp_xml:get_attribute(X, <<"jid">>, "")
+                    end
+               ),
+               exmpp_xml:attribute(<<"subscription">>,exmpp_xml:get_attribute(X, <<"subscription">>, ""))],[])
+               end, Items),
+    NewRoster = exmpp_xml:set_children(Roster, ModItems),
+    send_packet(_Session, exmpp_iq:result(IQ, NewRoster));
+
 process_iq(Session, "get", ?NS_INBAND_REGISTER, IQ) ->
     Result = exmpp_iq:result(IQ, ej2j_helper:inband_register()),
     send_packet(Session, Result);
@@ -131,8 +151,9 @@ process_iq(Session, "set", ?NS_INBAND_REGISTER, IQ) ->
 	Password = ej2j_helper:form_field(Form, <<"password">>),
 	UserSession = start_client(SenderJID, JID, Password),
         exmpp_session:login(UserSession),
-        exmpp_session:send_packet(UserSession, exmpp_presence:set_status(exmpp_presence:available(), undefined)),
-	send_packet(Session, exmpp_iq:result(IQ))
+        Status = exmpp_presence:set_status(exmpp_presence:available(), undefined),
+        Roster = exmpp_client_roster:get_roster(),
+        send_packet(Session, exmpp_iq:result(IQ)),
     catch
         _Class:_Error ->
 	    send_packet(Session, exmpp_iq:error(IQ, forbidden))
