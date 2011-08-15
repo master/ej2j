@@ -68,7 +68,7 @@ make([Record|Tail], From, To, FromStr, ToStr, Acc) ->
                      end;
                  {ToStr, NewTo, Route, _Ref} -> 
                      Node = string:join([exmpp_jid:node_as_list(From), exmpp_jid:domain_as_list(From)], "%"),
-                     Domain = ?COMPONENT,
+                     Domain = ej2j:get_app_env(component, ?COMPONENT),
                      Resource = exmpp_jid:resource_as_list(From),
                      NewFrom = exmpp_jid:make(Node, Domain, Resource),
                      [{Route, NewFrom, NewTo}|Acc];
