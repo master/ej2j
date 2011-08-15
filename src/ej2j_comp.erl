@@ -120,24 +120,25 @@ process_iq(Session, "get", ?NS_DISCO_ITEMS, IQ) ->
     Result = exmpp_iq:result(IQ, exmpp_xml:element(?NS_DISCO_ITEMS, 'query', [], [])),
     send_packet(Session, Result);
 
-process_iq(_Session, _Type, ?NS_ROSTER, IQ) ->
-    Roster = exmpp_xml:get_element_by_ns(IQ, 'jabber:iq:roster'),
-    Items = exmpp_xml:get_elements(Roster, 'item'),
-    ModItems = lists:map(fun(X) -> Jid = exmpp_jid:parse(exmpp_xml:get_attribute(X, <<"jid">>, "")), 
-               exmpp_xml:element(?NS_ROSTER, 'item', [
-               exmpp_xml:attribute(<<"jid">>,
-                    case string:chr(exmpp_jid:prep_to_list(Jid), $%) of
-                       0 ->
-                         binary:list_to_bin(exmpp_jid:node_as_list(Jid) ++ "%" ++ exmpp_jid:domain_as_list(Jid) ++ "@" ++ 
-                            ej2j:get_app_env(component, ?COMPONENT));
-                       _Else ->
-                         exmpp_xml:get_attribute(X, <<"jid">>, "")
-                    end
-               ),
-               exmpp_xml:attribute(<<"subscription">>,exmpp_xml:get_attribute(X, <<"subscription">>, ""))],[])
-               end, Items),
-    NewRoster = exmpp_xml:set_children(Roster, ModItems),
-    send_packet(_Session, exmpp_iq:result(IQ, NewRoster));
+process_iq(_Session, "result", ?NS_ROSTER, IQ) ->
+    Component = list_to_binary(ej2j:get_app_env(component, ?COMPONENT)),
+    Roster = exmpp_xml:get_element_by_ns(IQ, ?NS_ROSTER),
+    Items = lists:map(
+              fun(Item) -> 
+                      Attr = exmpp_xml:get_attribute(Item, <<"jid">>, <<"">>),
+                      JID = exmpp_jid:parse(Attr),
+                      NewJID = case exmpp_jid:domain(JID) of
+                                   Component -> Attr;
+                                   Domain ->
+                                       Node = exmpp_jid:node(JID),
+                                       <<Node/binary, "%", Domain/binary, "@", Component/binary>>
+                               end,
+                      NewAttr = exmpp_xml:attribute(<<"jid">>, NewJID),
+                      exmpp_xml:set_attribute(Item, NewAttr)
+              end, exmpp_xml:get_elements(Roster, 'item')),
+    NewRoster = exmpp_xml:set_children(Roster, Items),
+    NewIQ = exmpp_xml:set_children(IQ, [NewRoster]),
+    process_generic(NewIQ);
 
 process_iq(Session, "get", ?NS_INBAND_REGISTER, IQ) ->
     Result = exmpp_iq:result(IQ, ej2j_helper:inband_register()),
