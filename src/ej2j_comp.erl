@@ -151,9 +151,11 @@ process_iq(Session, "set", ?NS_INBAND_REGISTER, IQ) ->
 	Password = ej2j_helper:form_field(Form, <<"password">>),
 	UserSession = start_client(SenderJID, JID, Password),
         exmpp_session:login(UserSession),
-        exmpp_presence:set_status(exmpp_presence:available(), undefined),
-        exmpp_client_roster:get_roster(),
-        send_packet(Session, exmpp_iq:result(IQ))
+        Status = exmpp_presence:set_status(exmpp_presence:available(), undefined),
+        Roster = exmpp_client_roster:get_roster(),
+        send_packet(Session, exmpp_iq:result(IQ)),
+        exmpp_session:send_packet(UserSession, Status),
+        exmpp_session:send_packet(UserSession, Roster)
     catch
         _Class:_Error ->
 	    send_packet(Session, exmpp_iq:error(IQ, forbidden))
