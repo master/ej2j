@@ -10,6 +10,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
 	 code_change/3]).
 
+-define(RESTART_DELAY, 5000).
+
 -include_lib("exmpp/include/exmpp_client.hrl").
 -include_lib("exmpp/include/exmpp_xml.hrl").
 -include_lib("exmpp/include/exmpp_nss.hrl").
@@ -74,9 +76,11 @@ handle_info(#received_packet{packet_type=Type, raw_packet=Packet}, State) ->
     error_logger:warning_msg("Unknown packet received(~p): ~p~n", [Type, Packet]),
     {noreply, State};
 
-handle_info({'EXIT', Pid, _}, #state{db=DB} = State) ->
-    NewDB = ej2j_route:del(DB, Pid),
-    {noreply, State#state{db = NewDB}};
+handle_info({'EXIT', Session, _}, #state{session=Session, db=DB} = State) ->
+    timer:sleep(?RESTART_DELAY),
+    NewDB = ej2j_route:del(DB, Session),
+    NewSession = ej2j_helper:component(),
+    {noreply, State#state{session=NewSession, db=NewDB}};
 
 handle_info(_Msg, State) ->
     {noreply, State}.
