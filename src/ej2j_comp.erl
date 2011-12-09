@@ -76,11 +76,19 @@ handle_info(#received_packet{packet_type=Type, raw_packet=Packet}, State) ->
     error_logger:warning_msg("Unknown packet received(~p): ~p~n", [Type, Packet]),
     {noreply, State};
 
-handle_info({'EXIT', Session, _}, #state{session=Session, db=DB} = State) ->
+%% component has died
+handle_info({'EXIT', ServerS, _}, #state{db=DB, session=ServerS} = State) ->
     timer:sleep(?RESTART_DELAY),
-    NewDB = ej2j_route:del(DB, Session),
-    NewSession = ej2j_helper:component(),
-    {noreply, State#state{session=NewSession, db=NewDB}};
+    NewServerS = ej2j_helper:component(),
+    ej2j_route:free(DB),
+    NewDB = ej2j_route:init(),
+    {noreply, State#state{session=NewServerS, db=NewDB}};
+
+%% one of the user sessions died
+handle_info({'EXIT', Pid, _}, #state{db=DB} = State) ->
+    timer:sleep(?RESTART_DELAY),
+    NewDB = ej2j_route:del(DB, Pid),
+    {noreply, State#state{db=NewDB}};
 
 handle_info(_Msg, State) ->
     {noreply, State}.
