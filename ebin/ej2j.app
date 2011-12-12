@@ -7,6 +7,6 @@
   {registered, [ej2j, ej2j_comp]},
   {mod, {ej2j, []}},
   {env, []},
-  {applications, [kernel, stdlib, exmpp]}
+  {applications, [kernel, stdlib, public_key, ssl, exmpp]}
  ]
 }.

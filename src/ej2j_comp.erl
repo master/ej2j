@@ -64,6 +64,10 @@ handle_call({get_routes, FromJID, ToJID}, _From, #state{db=DB} = State) ->
     Routes = ej2j_route:get(DB, FromJID, ToJID),
     {reply, Routes, State};
 
+handle_call(get_state, _From, #state{session=ServerS, db=DB} = State) ->
+    {reply, {state, {session, ServerS},
+                    {db, DB}}, State};
+
 handle_call(_Msg, _From, State) ->
     {reply, unexpected, State}.
 
@@ -86,7 +90,6 @@ handle_info({'EXIT', ServerS, _}, #state{db=DB, session=ServerS} = State) ->
 
 %% one of the user sessions died
 handle_info({'EXIT', Pid, _}, #state{db=DB} = State) ->
-    timer:sleep(?RESTART_DELAY),
     NewDB = ej2j_route:del(DB, Pid),
     {noreply, State#state{db=NewDB}};
 
@@ -163,7 +166,6 @@ process_iq(Session, "set", ?NS_INBAND_REGISTER, IQ) ->
 	JID = ej2j_helper:form_field(Form, <<"jid">>),
 	Password = ej2j_helper:form_field(Form, <<"password">>),
 	UserSession = start_client(SenderJID, JID, Password),
-        exmpp_session:login(UserSession),
         Status = exmpp_presence:set_status(exmpp_presence:available(), undefined),
         Roster = exmpp_client_roster:get_roster(),
         send_packet(Session, exmpp_iq:result(IQ)),
@@ -215,13 +217,41 @@ send_packet(Session, El) ->
 -spec client_spawn(list(), list()) -> {tuple(), pid()} | false.
 client_spawn(JID, Password) ->
     try
-	[User, Domain] = string:tokens(JID, "@"),
-	FullJID = exmpp_jid:make(User, Domain, random),
-	Session = exmpp_session:start_link(),
-	exmpp_session:auth_info(Session, FullJID, Password),
-	exmpp_session:auth_method(Session, digest),
-	{ok, _StreamId} = exmpp_session:connect_TCP(Session, Domain, 5222),
+        [User, Domain] = string:tokens(JID, "@"),
+        FullJID = exmpp_jid:make(User, Domain, random),
+        {ok, Session} = auth(sasl_plain, FullJID, Domain, Password),
 	{FullJID, Session}
     catch
 	_Class:_Error -> false
+    end.
+
+-spec auth(term(), #xmlel{}, string(), string()) -> {ok, pid()} | {error, any()}.
+auth(sasl_plain, FullJID, Domain, Password) ->
+    Session = exmpp_session:start_link({1,0}),
+    %% Create a new session with basic auth
+    exmpp_session:auth_info(Session, FullJID, Password),
+    {ok, _StreamId, _Features} = connect_TCP(Session, Domain, 5222),
+    %% Login with defined JID / Auth
+    {ok, _JID} = exmpp_session:login(Session, "PLAIN"),
+    {ok, Session};
+
+auth(basic_digest, FullJID, Domain, Password) ->
+    Session = exmpp_session:start_link(),
+    %% Create a new session with basic auth
+    exmpp_session:auth_basic_digest(Session, FullJID, Password),
+    {ok, _StreamId, _Features} = connect_TCP(Session, Domain, 5222),
+    %% Login with defined JID / Auth
+    {ok, _JID} = exmpp_session:login(Session),
+    {ok, Session};
+
+auth(_AuthType, _FullJid, _Domain, _Password) ->
+    {error, "Unknown authentication type"}.
+
+
+-spec connect_TCP(pid(), string(), port()) -> {ok, any(), #xmlel{}} | {error, any()}.
+connect_TCP(Session, Host, Port) ->
+    case exmpp_session:connect_TCP(Session, Host, Port) of
+        {ok, StreamId} -> {ok, StreamId, empty};
+        {ok, StreamId, Features} -> {ok, StreamId, Features};
+        Any -> {error, Any}
     end.
