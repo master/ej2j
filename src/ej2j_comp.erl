@@ -19,7 +19,7 @@
 
 -include("ej2j.hrl").
 
--record(state, {session, db}).
+-record(state, {session}).
 
 %% Public API
 
@@ -44,29 +44,28 @@ get_routes(FromJID, ToJID) ->
 init([]) ->
     process_flag(trap_exit, true),
     Session = ej2j_helper:component(),
-    {ok, #state{session = Session, db = ej2j_route:init()}}.
+    {ok, #state{session = Session}}.
 
 -spec handle_call(any(), any(), #state{}) -> {reply, any(), #state{}} | {stop, any(), any(), #state{}}.
 handle_call(stop, _From, State) ->
     exmpp_component:stop(State#state.session),
     {stop, normal, ok, State};
 
-handle_call({start_client, FromJID, ForeignJID, Password}, _From, #state{db=DB, session=ServerS} = State) ->
+handle_call({start_client, FromJID, ForeignJID, Password}, _From, #state{session=ServerS} = State) ->
     try
 	{ToJID, ClientS} = client_spawn(ForeignJID, Password),
-	NewDB = ej2j_route:add(DB, {FromJID, ToJID, ClientS, ServerS}),
-	{reply, ClientS, State#state{db = NewDB}}
+	ok = ej2j_route:add(FromJID, ToJID, ClientS, ServerS),
+	{reply, ClientS, State}
     catch
 	_Class:_Error -> {reply, false, State}
     end;
 
-handle_call({get_routes, FromJID, ToJID}, _From, #state{db=DB} = State) ->
-    Routes = ej2j_route:get(DB, FromJID, ToJID),
+handle_call({get_routes, FromJID, ToJID}, _From, State) ->
+    Routes = ej2j_route:get(FromJID, ToJID),
     {reply, Routes, State};
 
-handle_call(get_state, _From, #state{session=ServerS, db=DB} = State) ->
-    {reply, {state, {session, ServerS},
-                    {db, DB}}, State};
+handle_call(get_state, _From, #state{session=ServerS} = State) ->
+    {reply, {state, {session, ServerS}}, State};
 
 handle_call(_Msg, _From, State) ->
     {reply, unexpected, State}.
@@ -81,17 +80,16 @@ handle_info(#received_packet{packet_type=Type, raw_packet=Packet}, State) ->
     {noreply, State};
 
 %% component has died
-handle_info({'EXIT', ServerS, _}, #state{db=DB, session=ServerS} = State) ->
+handle_info({'EXIT', ServerS, _}, #state{session=ServerS} = State) ->
     timer:sleep(?RESTART_DELAY),
     NewServerS = ej2j_helper:component(),
-    ej2j_route:free(DB),
-    NewDB = ej2j_route:init(),
-    {noreply, State#state{session=NewServerS, db=NewDB}};
+    ej2j_route:free(),
+    {noreply, State#state{session=NewServerS}};
 
 %% one of the user sessions died
-handle_info({'EXIT', Pid, _}, #state{db=DB} = State) ->
-    NewDB = ej2j_route:del(DB, Pid),
-    {noreply, State#state{db=NewDB}};
+handle_info({'EXIT', Pid, _}, State) ->
+    ej2j_route:del(Pid),
+    {noreply, State};
 
 handle_info(_Msg, State) ->
     {noreply, State}.
@@ -189,10 +187,16 @@ process_message(_Session, Message) ->
 
 -spec process_generic(#xmlel{}) -> ok.
 process_generic(Packet) ->
-    From = exmpp_jid:parse(exmpp_stanza:get_sender(Packet)),
-    To = exmpp_jid:parse(exmpp_stanza:get_recipient(Packet)),
-    Routes = get_routes(From, To),
-    route_packet(Routes, Packet).
+    Sender = exmpp_stanza:get_sender(Packet),
+    Recipient = exmpp_stanza:get_recipient(Packet),
+    if (Sender == undefined) or (Recipient == undefined) ->
+            ok; % FIX: Not sure if we have to skip such messages
+       true -> 
+            From = exmpp_jid:parse(Sender),
+            To = exmpp_jid:parse(Recipient),
+            Routes = get_routes(From, To),
+            route_packet(Routes, Packet)
+    end.
 
 -spec route_packet(list(), #xmlel{}) -> ok.
 route_packet([{{client, Session}, NewFrom, NewTo}|Tail], Packet) ->
