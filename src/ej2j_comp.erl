@@ -10,6 +10,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
 	 code_change/3]).
 
+-define(RESTART_DELAY, 5000).
+
 -include_lib("exmpp/include/exmpp_client.hrl").
 -include_lib("exmpp/include/exmpp_xml.hrl").
 -include_lib("exmpp/include/exmpp_nss.hrl").
@@ -17,7 +19,7 @@
 
 -include("ej2j.hrl").
 
--record(state, {session, db}).
+-record(state, {session}).
 
 %% Public API
 
@@ -42,25 +44,28 @@ get_routes(FromJID, ToJID) ->
 init([]) ->
     process_flag(trap_exit, true),
     Session = ej2j_helper:component(),
-    {ok, #state{session = Session, db = ej2j_route:init()}}.
+    {ok, #state{session = Session}}.
 
 -spec handle_call(any(), any(), #state{}) -> {reply, any(), #state{}} | {stop, any(), any(), #state{}}.
 handle_call(stop, _From, State) ->
     exmpp_component:stop(State#state.session),
     {stop, normal, ok, State};
 
-handle_call({start_client, FromJID, ForeignJID, Password}, _From, #state{db=DB, session=ServerS} = State) ->
+handle_call({start_client, FromJID, ForeignJID, Password}, _From, #state{session=ServerS} = State) ->
     try
 	{ToJID, ClientS} = client_spawn(ForeignJID, Password),
-	NewDB = ej2j_route:add(DB, {FromJID, ToJID, ClientS, ServerS}),
-	{reply, ClientS, State#state{db = NewDB}}
+	ok = ej2j_route:add(FromJID, ToJID, ClientS, ServerS),
+	{reply, ClientS, State}
     catch
 	_Class:_Error -> {reply, false, State}
     end;
 
-handle_call({get_routes, FromJID, ToJID}, _From, #state{db=DB} = State) ->
-    Routes = ej2j_route:get(DB, FromJID, ToJID),
+handle_call({get_routes, FromJID, ToJID}, _From, State) ->
+    Routes = ej2j_route:get(FromJID, ToJID),
     {reply, Routes, State};
+
+handle_call(get_state, _From, #state{session=ServerS} = State) ->
+    {reply, {state, {session, ServerS}}, State};
 
 handle_call(_Msg, _From, State) ->
     {reply, unexpected, State}.
@@ -74,9 +79,17 @@ handle_info(#received_packet{packet_type=Type, raw_packet=Packet}, State) ->
     error_logger:warning_msg("Unknown packet received(~p): ~p~n", [Type, Packet]),
     {noreply, State};
 
-handle_info({'EXIT', Pid, _}, #state{db=DB} = State) ->
-    NewDB = ej2j_route:del(DB, Pid),
-    {noreply, State#state{db = NewDB}};
+%% component has died
+handle_info({'EXIT', ServerS, _}, #state{session=ServerS} = State) ->
+    timer:sleep(?RESTART_DELAY),
+    NewServerS = ej2j_helper:component(),
+    ej2j_route:free(),
+    {noreply, State#state{session=NewServerS}};
+
+%% one of the user sessions died
+handle_info({'EXIT', Pid, _}, State) ->
+    ej2j_route:del(Pid),
+    {noreply, State};
 
 handle_info(_Msg, State) ->
     {noreply, State}.
@@ -151,7 +164,6 @@ process_iq(Session, "set", ?NS_INBAND_REGISTER, IQ) ->
 	JID = ej2j_helper:form_field(Form, <<"jid">>),
 	Password = ej2j_helper:form_field(Form, <<"password">>),
 	UserSession = start_client(SenderJID, JID, Password),
-        exmpp_session:login(UserSession),
         Status = exmpp_presence:set_status(exmpp_presence:available(), undefined),
         Roster = exmpp_client_roster:get_roster(),
         send_packet(Session, exmpp_iq:result(IQ)),
@@ -175,10 +187,16 @@ process_message(_Session, Message) ->
 
 -spec process_generic(#xmlel{}) -> ok.
 process_generic(Packet) ->
-    From = exmpp_jid:parse(exmpp_stanza:get_sender(Packet)),
-    To = exmpp_jid:parse(exmpp_stanza:get_recipient(Packet)),
-    Routes = get_routes(From, To),
-    route_packet(Routes, Packet).
+    Sender = exmpp_stanza:get_sender(Packet),
+    Recipient = exmpp_stanza:get_recipient(Packet),
+    if (Sender == undefined) or (Recipient == undefined) ->
+            ok; % FIX: Not sure if we have to skip such messages
+       true -> 
+            From = exmpp_jid:parse(Sender),
+            To = exmpp_jid:parse(Recipient),
+            Routes = get_routes(From, To),
+            route_packet(Routes, Packet)
+    end.
 
 -spec route_packet(list(), #xmlel{}) -> ok.
 route_packet([{{client, Session}, NewFrom, NewTo}|Tail], Packet) ->
@@ -203,13 +221,41 @@ send_packet(Session, El) ->
 -spec client_spawn(list(), list()) -> {tuple(), pid()} | false.
 client_spawn(JID, Password) ->
     try
-	[User, Domain] = string:tokens(JID, "@"),
-	FullJID = exmpp_jid:make(User, Domain, random),
-	Session = exmpp_session:start_link(),
-	exmpp_session:auth_info(Session, FullJID, Password),
-	exmpp_session:auth_method(Session, digest),
-	{ok, _StreamId} = exmpp_session:connect_TCP(Session, Domain, 5222),
+        [User, Domain] = string:tokens(JID, "@"),
+        FullJID = exmpp_jid:make(User, Domain, random),
+        {ok, Session} = auth(sasl_plain, FullJID, Domain, Password),
 	{FullJID, Session}
     catch
 	_Class:_Error -> false
+    end.
+
+-spec auth(term(), #xmlel{}, string(), string()) -> {ok, pid()} | {error, any()}.
+auth(sasl_plain, FullJID, Domain, Password) ->
+    Session = exmpp_session:start_link({1,0}),
+    %% Create a new session with basic auth
+    exmpp_session:auth_info(Session, FullJID, Password),
+    {ok, _StreamId, _Features} = connect_TCP(Session, Domain, 5222),
+    %% Login with defined JID / Auth
+    {ok, _JID} = exmpp_session:login(Session, "PLAIN"),
+    {ok, Session};
+
+auth(basic_digest, FullJID, Domain, Password) ->
+    Session = exmpp_session:start_link(),
+    %% Create a new session with basic auth
+    exmpp_session:auth_basic_digest(Session, FullJID, Password),
+    {ok, _StreamId, _Features} = connect_TCP(Session, Domain, 5222),
+    %% Login with defined JID / Auth
+    {ok, _JID} = exmpp_session:login(Session),
+    {ok, Session};
+
+auth(_AuthType, _FullJid, _Domain, _Password) ->
+    {error, "Unknown authentication type"}.
+
+
+-spec connect_TCP(pid(), string(), port()) -> {ok, any(), #xmlel{}} | {error, any()}.
+connect_TCP(Session, Host, Port) ->
+    case exmpp_session:connect_TCP(Session, Host, Port) of
+        {ok, StreamId} -> {ok, StreamId, empty};
+        {ok, StreamId, Features} -> {ok, StreamId, Features};
+        Any -> {error, Any}
     end.

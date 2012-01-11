@@ -5,4 +5,4 @@ erl \
     -config ej2j.config \
     -pa ebin \
     -boot start_sasl \
-    -eval "application:start(exmpp), application:start(ej2j)"
+    -eval "[application:start(A) || A <- [crypto, public_key, ssl, exmpp, ej2j] ]"
