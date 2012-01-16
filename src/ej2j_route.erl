@@ -38,14 +38,27 @@ init([]) ->
     Routes = ets:new('route', [bag]),
     {ok, #state{route_db=Routes}}.
 
--spec handle_call(any(), any(), #state{}) -> {reply, any(), #state{}} | {stop, any(), any(), #state{}}.
+-spec handle_call(any(), any(), #state{}) -> {reply, any(), #state{}} |
+                                             {stop, any(), any(), #state{}}.
 handle_call({add, OwnerJID, ForeignJID, ClientSession, ServerSession},
             _From, #state{route_db=Routes} = State) ->
     Ref = make_ref(),
-    ets:insert(Routes, {exmpp_jid:to_list(OwnerJID), ForeignJID, {client, ClientSession}, Ref}),
-    ets:insert(Routes, {exmpp_jid:to_list(ForeignJID), OwnerJID, {server, ServerSession}, Ref}),
-    ets:insert(Routes, {exmpp_jid:bare_to_list(OwnerJID), exmpp_jid:bare(ForeignJID), {client, ClientSession}, Ref}),
-    ets:insert(Routes, {exmpp_jid:bare_to_list(ForeignJID), exmpp_jid:bare(OwnerJID), {server, ServerSession}, Ref}),
+    ets:insert(Routes, {exmpp_jid:to_list(OwnerJID), 
+                        ForeignJID, 
+                        {client, ClientSession}, 
+                        Ref}),
+    ets:insert(Routes, {exmpp_jid:to_list(ForeignJID),
+                        OwnerJID,
+                        {server, ServerSession},
+                        Ref}),
+    ets:insert(Routes, {exmpp_jid:bare_to_list(OwnerJID),
+                        exmpp_jid:bare(ForeignJID), 
+                        {client, ClientSession}, 
+                        Ref}),
+    ets:insert(Routes, {exmpp_jid:bare_to_list(ForeignJID), 
+                        exmpp_jid:bare(OwnerJID), 
+                        {server, ServerSession}, 
+                        Ref}),
     {reply, ok, State};
 
 handle_call(free, _From, #state{route_db=Routes} = State) ->
@@ -144,7 +157,8 @@ make([Record|Tail], From, To, FromStr, ToStr, Acc) ->
                              [{Route, NewFrom, NewTo}|Acc]
                      end;
                  {ToStr, NewTo, Route, _Ref} -> 
-                     Node = string:join([exmpp_jid:node_as_list(From), exmpp_jid:domain_as_list(From)], "%"),
+                     Node = string:join([exmpp_jid:node_as_list(From), 
+                                         exmpp_jid:domain_as_list(From)], "%"),
                      Domain = ej2j:get_app_env(component, ?COMPONENT),
                      Resource = exmpp_jid:resource_as_list(From),
                      NewFrom = exmpp_jid:make(Node, Domain, Resource),

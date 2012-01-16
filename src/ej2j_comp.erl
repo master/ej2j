@@ -46,12 +46,14 @@ init([]) ->
     Session = ej2j_helper:component(),
     {ok, #state{session = Session}}.
 
--spec handle_call(any(), any(), #state{}) -> {reply, any(), #state{}} | {stop, any(), any(), #state{}}.
+-spec handle_call(any(), any(), #state{}) -> {reply, any(), #state{}} | 
+                                             {stop, any(), any(), #state{}}.
 handle_call(stop, _From, State) ->
     exmpp_component:stop(State#state.session),
     {stop, normal, ok, State};
 
-handle_call({start_client, FromJID, ForeignJID, Password}, _From, #state{session=ServerS} = State) ->
+handle_call({start_client, FromJID, ForeignJID, Password}, _From,
+            #state{session=ServerS} = State) ->
     try
 	{ToJID, ClientS} = client_spawn(ForeignJID, Password),
 	ok = ej2j_route:add(FromJID, ToJID, ClientS, ServerS),
@@ -109,16 +111,19 @@ code_change(_OldVsn, State, _Extra) ->
 %% Process received packet
 
 -spec process_received_packet(any(), #received_packet{}) -> ok.
-process_received_packet(Session, #received_packet{packet_type = 'iq'} = Packet) ->
+process_received_packet(Session, 
+                        #received_packet{packet_type = 'iq'} = Packet) ->
     #received_packet{type_attr=Type, raw_packet = IQ} = Packet,
     NS = exmpp_xml:get_ns_as_atom(exmpp_iq:get_payload(IQ)),
     process_iq(Session, Type, NS, IQ);
 
-process_received_packet(Session, #received_packet{packet_type = 'presence'} = Packet) ->
+process_received_packet(Session, 
+                        #received_packet{packet_type = 'presence'} = Packet) ->
     #received_packet{raw_packet = Presence} = Packet,
     process_presence(Session, Presence);
 
-process_received_packet(Session, #received_packet{packet_type = 'message'} = Packet) ->
+process_received_packet(Session, 
+                        #received_packet{packet_type = 'message'} = Packet) ->
     #received_packet{raw_packet = Message} = Packet,
     process_message(Session, Message).
 
@@ -130,7 +135,8 @@ process_iq(Session, "get", ?NS_DISCO_INFO, IQ) ->
     send_packet(Session, Result);
 
 process_iq(Session, "get", ?NS_DISCO_ITEMS, IQ) ->
-    Result = exmpp_iq:result(IQ, exmpp_xml:element(?NS_DISCO_ITEMS, 'query', [], [])),
+    Query = exmpp_xml:element(?NS_DISCO_ITEMS, 'query', [], []),
+    Result = exmpp_iq:result(IQ, Query),
     send_packet(Session, Result);
 
 process_iq(_Session, "result", ?NS_ROSTER, IQ) ->
@@ -160,7 +166,9 @@ process_iq(Session, "get", ?NS_INBAND_REGISTER, IQ) ->
 process_iq(Session, "set", ?NS_INBAND_REGISTER, IQ) ->
     SenderJID = exmpp_jid:parse(exmpp_stanza:get_sender(IQ)),
     try
-	Form = ej2j_helper:form_parse(exmpp_xml:get_element(exmpp_iq:get_payload(IQ), ?NS_DATA_FORMS, 'x')),
+        Payload = exmpp_iq:get_payload(IQ),
+        FormElement = exmpp_xml:get_element(Payload, ?NS_DATA_FORMS, 'x'),
+	Form = ej2j_helper:form_parse(FormElement),
 	JID = ej2j_helper:form_field(Form, <<"jid">>),
 	Password = ej2j_helper:form_field(Form, <<"password">>),
 	UserSession = start_client(SenderJID, JID, Password),
@@ -229,7 +237,8 @@ client_spawn(JID, Password) ->
 	_Class:_Error -> false
     end.
 
--spec auth(term(), #xmlel{}, string(), string()) -> {ok, pid()} | {error, any()}.
+-spec auth(term(), #xmlel{}, string(), string()) -> 
+                  {ok, pid()} | {error, any()}.
 auth(sasl_plain, FullJID, Domain, Password) ->
     Session = exmpp_session:start_link({1,0}),
     %% Create a new session with basic auth
@@ -252,7 +261,8 @@ auth(_AuthType, _FullJid, _Domain, _Password) ->
     {error, "Unknown authentication type"}.
 
 
--spec connect_TCP(pid(), string(), port()) -> {ok, any(), #xmlel{}} | {error, any()}.
+-spec connect_TCP(pid(), string(), port()) -> 
+                         {ok, any(), #xmlel{}} | {error, any()}.
 connect_TCP(Session, Host, Port) ->
     case exmpp_session:connect_TCP(Session, Host, Port) of
         {ok, StreamId} -> {ok, StreamId, empty};
