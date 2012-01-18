@@ -108,6 +108,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% External API functions
+
 -spec free() -> ok.
 free() ->
     gen_server:call(?MODULE, free).

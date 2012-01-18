@@ -74,6 +74,7 @@ handle_call(_Msg, _From, State) ->
 
 -spec handle_info(any(), #state{}) -> {noreply, #state{}}.
 handle_info(#received_packet{} = Packet, #state{session=S} = State) ->
+    error_logger:info_msg("Packet received: ~p~n", [Packet]),
     spawn_link(fun() -> process_received_packet(S, Packet) end),
     {noreply, State};
 
