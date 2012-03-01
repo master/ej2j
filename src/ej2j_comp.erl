@@ -232,41 +232,12 @@ client_spawn(JID, Password) ->
     try
         [User, Domain] = string:tokens(JID, "@"),
         FullJID = exmpp_jid:make(User, Domain, random),
-        {ok, Session} = auth(sasl_plain, FullJID, Domain, Password),
+        Session = exmpp_session:start_link({1, 0}),
+        exmpp_session:auth_info(Session, FullJID, Password),
+        Connect = exmpp_session:connect_TCP(Session, Domain, 5222),
+        ok = element(1, Connect),
+        {ok, FullJID} = exmpp_session:login(Session, "DIGEST-MD5"),
 	{FullJID, Session}
     catch
 	_Class:_Error -> false
-    end.
-
--spec auth(term(), #xmlel{}, string(), string()) -> 
-                  {ok, pid()} | {error, any()}.
-auth(sasl_plain, FullJID, Domain, Password) ->
-    Session = exmpp_session:start_link({1,0}),
-    %% Create a new session with basic auth
-    exmpp_session:auth_info(Session, FullJID, Password),
-    {ok, _StreamId, _Features} = connect_TCP(Session, Domain, 5222),
-    %% Login with defined JID / Auth
-    {ok, _JID} = exmpp_session:login(Session, "PLAIN"),
-    {ok, Session};
-
-auth(basic_digest, FullJID, Domain, Password) ->
-    Session = exmpp_session:start_link(),
-    %% Create a new session with basic auth
-    exmpp_session:auth_basic_digest(Session, FullJID, Password),
-    {ok, _StreamId, _Features} = connect_TCP(Session, Domain, 5222),
-    %% Login with defined JID / Auth
-    {ok, _JID} = exmpp_session:login(Session),
-    {ok, Session};
-
-auth(_AuthType, _FullJid, _Domain, _Password) ->
-    {error, "Unknown authentication type"}.
-
-
--spec connect_TCP(pid(), string(), port()) -> 
-                         {ok, any(), #xmlel{}} | {error, any()}.
-connect_TCP(Session, Host, Port) ->
-    case exmpp_session:connect_TCP(Session, Host, Port) of
-        {ok, StreamId} -> {ok, StreamId, empty};
-        {ok, StreamId, Features} -> {ok, StreamId, Features};
-        Any -> {error, Any}
     end.
