@@ -1,22 +1,23 @@
 #!/bin/sh
 
 ### BEGIN INIT INFO
-# Provides:          mails
+# Provides:          ej2j
 # Required-Start:    $network $local_fs $named
 # Required-Stop:
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
-# Short-Description: Starts Mail server
-# Description:       Mail server written in Erlang.
+# Short-Description: Starts EJ2J transport
+# Description:       Starts MPP-to-XMPP Jabber Transport written in Erlang
 ### END INIT INFO
 
 PATH=/sbin:/usr/sbin:/bin:/usr/bin
 
-INSTANCES="mailsrv"
-CONF_DIR=/etc/mails
-LOG_DIR=/var/log/mails/
-LONGNAME="Mail server"
+INSTANCES="j2j"
+CONF_DIR=/etc/ej2j
+LOG_DIR=/var/log/ej2j/
+LONGNAME="EJ2J"
 COOKIE=SALTIESTWATERS
+APPLICAIONS="alog, exmpp, ej2j"
 
 case "$1" in
     start)
@@ -31,7 +32,7 @@ case "$1" in
 -config ${CONF_DIR}/${t} \
 -setcookie ${COOKIE} \
 -boot start_sasl \
--eval '[application:start(A) || A <- [alog, exmpp, mails] ]'"
+-eval '[application:start(A) || A <- [${APPLICAIONS}] ]'"
             fi
         done
         ;;
