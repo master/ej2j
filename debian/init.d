@@ -17,7 +17,7 @@ CONF_DIR=/etc/ej2j
 LOG_DIR=/var/log/ej2j/
 LONGNAME="EJ2J"
 COOKIE=SALTIESTWATERS
-APPLICAIONS="alog, exmpp, ej2j"
+APPLICAIONS="alog, crypto, public_key, ssl, exmpp, ej2j"
 
 case "$1" in
     start)
