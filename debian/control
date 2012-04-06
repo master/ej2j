@@ -1,0 +1,14 @@
+Source: ej2j
+Priority: extra
+Maintainer: Oleg Smirnov <oleg.smirnov@gmail.com>
+Build-Depends: debhelper (>= 8.0.0), erlang-base, exmpp, alogger
+Standards-Version: 3.9.2
+Section: unknown
+Homepage: https://github.com/socialabs/ej2j
+Vcs-Git: git@github.com:socialabs/ej2j.git
+Vcs-Browser: https://github.com/socialabs/ej2j
+
+Package: ej2j
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: ej2j - Erlang Jabber-to-Jabber Transport
