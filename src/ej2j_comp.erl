@@ -141,6 +141,9 @@ process_iq(Session, "get", ?NS_DISCO_ITEMS, IQ) ->
     send_packet(Session, Result);
 
 process_iq(_Session, "result", ?NS_ROSTER, IQ) ->
+    Sender = exmpp_stanza:get_sender(IQ),
+    Recipient = exmpp_stanza:get_recipient(IQ),
+    route_update(Sender, Recipient),
     Component = list_to_binary(ej2j:get_app_env(component, ?COMPONENT)),
     Roster = exmpp_xml:get_element_by_ns(IQ, ?NS_ROSTER),
     Items = lists:map(
@@ -198,8 +201,9 @@ process_message(_Session, Message) ->
 process_generic(Packet) ->
     Sender = exmpp_stanza:get_sender(Packet),
     Recipient = exmpp_stanza:get_recipient(Packet),
+    route_update(Sender, Recipient),
     if (Sender == undefined) or (Recipient == undefined) ->
-            ok; % FIX: Not sure if we have to skip such messages
+            ok;
        true -> 
             From = exmpp_jid:parse(Sender),
             To = exmpp_jid:parse(Recipient),
@@ -240,4 +244,14 @@ client_spawn(JID, Password) ->
 	{FullJID, Session}
     catch
 	_Class:_Error -> false
+    end.
+
+-spec route_update(binary(), binary()) -> ok.
+route_update(Sender, Recipient) ->
+    case exmpp_jid:domain(exmpp_jid:parse(Sender)) of
+        <<"chat.facebook.com">> ->
+            New = binary_to_list(Recipient),
+            [Old, _, _] = string:tokens(New, "_"),
+            ej2j_route:update(Old, New);
+        _Else -> ok
     end.

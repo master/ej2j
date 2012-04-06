@@ -73,13 +73,18 @@ handle_call(get_state, _From, #state{route_db=Routes} = State) ->
     {reply, {state, {route_db, Routes}}, State};
 
 handle_call({update, Old, New}, _From, #state{route_db=Routes} = State) ->
-    [{Old, OwnerJID, {server, ServerSession}, Ref}] = get_entry(Routes, Old),
-    JID = exmpp_jid:to_list(OwnerJID),
-    [{JID, _Old, {client, ClientSession}, Ref}] = get_entry(Routes, JID),
-    ForeignJID = exmpp_jid:parse(New),
-    del_entry(Routes, [Ref]),
-    add_entry(Routes, OwnerJID, ForeignJID, ClientSession, ServerSession),
-    {reply, ok, State};
+    try
+        [{Old, OwnerJID, {server, ServerSession}, Ref}] = get_entry(Routes, Old),
+        JID = exmpp_jid:to_list(OwnerJID),
+        [{JID, _Old, {client, ClientSession}, Ref}] = get_entry(Routes, JID),
+        ForeignJID = exmpp_jid:parse(New),
+        del_entry(Routes, [Ref]),
+        add_entry(Routes, OwnerJID, ForeignJID, ClientSession, ServerSession),
+        {reply, ok, State}
+    catch
+        _Class:_Error -> 
+            {reply, ok, State}
+    end;
 
 handle_call(_Msg, _From, State) ->
     {reply, unexpected, State}.
@@ -175,8 +180,11 @@ make([Record|Tail], From, To, FromStr, ToStr, Acc) ->
                              [{Route, NewFrom, NewTo}|Acc]
                      end;
                  {ToStr, NewTo, Route, _Ref} -> 
-                     Node = string:join([exmpp_jid:node_as_list(From), 
-                                         exmpp_jid:domain_as_list(From)], "%"),
+                     Node = case exmpp_jid:node_as_list(From) of 
+                                undefined -> "";
+                                _Else -> string:join([exmpp_jid:node_as_list(From), 
+                                                      exmpp_jid:domain_as_list(From)], "%")
+                            end,
                      Domain = ej2j:get_app_env(component, ?COMPONENT),
                      Resource = exmpp_jid:resource_as_list(From),
                      NewFrom = exmpp_jid:make(Node, Domain, Resource),
