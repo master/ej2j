@@ -9,7 +9,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
          code_change/3]).
 
--export([add/4, get/2, del/1, free/0]).
+-export([add/4, get/2, del/1, free/0, update/2]).
 
 -include_lib("exmpp/include/exmpp_client.hrl").
 -include_lib("exmpp/include/exmpp_xml.hrl").
@@ -42,23 +42,7 @@ init([]) ->
                                              {stop, any(), any(), #state{}}.
 handle_call({add, OwnerJID, ForeignJID, ClientSession, ServerSession},
             _From, #state{route_db=Routes} = State) ->
-    Ref = make_ref(),
-    ets:insert(Routes, {exmpp_jid:to_list(OwnerJID), 
-                        ForeignJID, 
-                        {client, ClientSession}, 
-                        Ref}),
-    ets:insert(Routes, {exmpp_jid:to_list(ForeignJID),
-                        OwnerJID,
-                        {server, ServerSession},
-                        Ref}),
-    ets:insert(Routes, {exmpp_jid:bare_to_list(OwnerJID),
-                        exmpp_jid:bare(ForeignJID), 
-                        {client, ClientSession}, 
-                        Ref}),
-    ets:insert(Routes, {exmpp_jid:bare_to_list(ForeignJID), 
-                        exmpp_jid:bare(OwnerJID), 
-                        {server, ServerSession}, 
-                        Ref}),
+    add_entry(Routes, OwnerJID, ForeignJID, ClientSession, ServerSession),
     {reply, ok, State};
 
 handle_call(free, _From, #state{route_db=Routes} = State) ->
@@ -87,6 +71,15 @@ handle_call({get, From, To}, _From, #state{route_db=Routes} = State) ->
 
 handle_call(get_state, _From, #state{route_db=Routes} = State) ->
     {reply, {state, {route_db, Routes}}, State};
+
+handle_call({update, Old, New}, _From, #state{route_db=Routes} = State) ->
+    [{Old, OwnerJID, {server, ServerSession}, Ref}] = get_entry(Routes, Old),
+    JID = exmpp_jid:to_list(OwnerJID),
+    [{JID, _Old, {client, ClientSession}, Ref}] = get_entry(Routes, JID),
+    ForeignJID = exmpp_jid:parse(New),
+    del_entry(Routes, [Ref]),
+    add_entry(Routes, OwnerJID, ForeignJID, ClientSession, ServerSession),
+    {reply, ok, State};
 
 handle_call(_Msg, _From, State) ->
     {reply, unexpected, State}.
@@ -126,7 +119,31 @@ del(Key) ->
 get(From, To) ->
     gen_server:call(?MODULE, {get, From, To}).
 
+-spec update(any(), any()) -> ok.
+update(Old, New) ->
+    gen_server:call(?MODULE, {update, Old, New}).
+
 %% Various helpers
+
+-spec add_entry(any(), any(), any(), pid(), pid()) -> true.
+add_entry(Routes, OwnerJID, ForeignJID, ClientSession, ServerSession) ->
+    Ref = make_ref(),
+    ets:insert(Routes, {exmpp_jid:to_list(OwnerJID), 
+                        ForeignJID, 
+                        {client, ClientSession}, 
+                        Ref}),
+    ets:insert(Routes, {exmpp_jid:to_list(ForeignJID),
+                        OwnerJID,
+                        {server, ServerSession},
+                        Ref}),
+    ets:insert(Routes, {exmpp_jid:bare_to_list(OwnerJID),
+                        exmpp_jid:bare(ForeignJID), 
+                        {client, ClientSession}, 
+                        Ref}),
+    ets:insert(Routes, {exmpp_jid:bare_to_list(ForeignJID), 
+                        exmpp_jid:bare(OwnerJID), 
+                        {server, ServerSession}, 
+                        Ref}).
 
 -spec get_entry(route_db(), any()) -> list().
 get_entry(Routes, Key) when is_list(Key) ->
