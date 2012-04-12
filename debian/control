@@ -10,5 +10,5 @@ Vcs-Browser: https://github.com/socialabs/ej2j
 
 Package: ej2j
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: erlang-base, exmpp, alogger
 Description: ej2j - Erlang Jabber-to-Jabber Transport
