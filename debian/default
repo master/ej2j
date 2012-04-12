@@ -1,0 +1,4 @@
+LONGNAME="EJ2J"
+COOKIE=SALTIESTWATERS
+APPS="alog, crypto, public_key, ssl, exmpp, ej2j"
+INSTANCES="j2j"
