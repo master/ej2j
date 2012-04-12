@@ -1,3 +1,9 @@
+ej2j (0.0.2-1) unstable; urgency=low
+
+  * Add workaround for Facebook chat
+
+ -- Oleg Smirnov <oleg.smirnov@gmail.com>  Thu, 12 Apr 2012 20:19:50 +0300
+
 ej2j (0.0.1-1) unstable; urgency=low
 
   * Initial release
