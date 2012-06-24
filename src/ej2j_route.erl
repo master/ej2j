@@ -44,35 +44,29 @@ handle_call({add, OwnerJID, ForeignJID, ClientSession, ServerSession},
             _From, #state{route_db=Routes} = State) ->
     add_entry(Routes, OwnerJID, ForeignJID, ClientSession, ServerSession),
     {reply, ok, State};
-
-handle_call(free, _From, #state{route_db=Routes} = State) ->
+handle_call(free, _From, #state{route_db = Routes} = State) ->
     ets:delete(Routes),
     NewRoutes = ets:new('route', [bag]),
-    {reply, ok, State#state{route_db=NewRoutes}};
-
+    {reply, ok, State#state{route_db = NewRoutes}};
 handle_call({del, Key}, _From,
-            #state{route_db=Routes} = State) when is_list(Key) ->
+            #state{route_db = Routes} = State) when is_list(Key) ->
     Refs = lists:flatten(ets:match(Routes, {Key, '_', '_', '$1'})),    
     del_entry(Routes, Refs),
     {reply, ok, State};
-
 handle_call({del, Key}, _From,
             #state{route_db=Routes} = State) when is_pid(Key) ->
     Refs = lists:flatten(ets:match(Routes, {'_', '_', {client, Key}, '$1'})),
     del_entry(Routes, Refs),
     {reply, ok, State};
-
 handle_call({get, From, To}, _From, #state{route_db=Routes} = State) ->
     FromStr = exmpp_jid:to_list(From),
     ToStr = exmpp_jid:to_list(To),
     Records = get_entry(Routes, FromStr) ++ get_entry(Routes, ToStr),
     Result = make(Records, From, To, FromStr, ToStr, []),
     {reply, Result, State};
-
 handle_call(get_state, _From, #state{route_db=Routes} = State) ->
     {reply, {state, {route_db, Routes}}, State};
-
-handle_call({update, Old, New}, _From, #state{route_db=Routes} = State) ->
+handle_call({update, Old, New}, _From, #state{route_db = Routes} = State) ->
     try
         [{Old, OwnerJID, {server, ServerSession}, Ref}] = get_entry(Routes, Old),
         JID = exmpp_jid:to_list(OwnerJID),
@@ -82,10 +76,8 @@ handle_call({update, Old, New}, _From, #state{route_db=Routes} = State) ->
         add_entry(Routes, OwnerJID, ForeignJID, ClientSession, ServerSession),
         {reply, ok, State}
     catch
-        _Class:_Error -> 
-            {reply, ok, State}
+        _Class:_Error -> {reply, ok, State}
     end;
-
 handle_call(_Msg, _From, State) ->
     {reply, unexpected, State}.
 
@@ -130,7 +122,7 @@ update(Old, New) ->
 
 %% Various helpers
 
--spec add_entry(any(), any(), any(), pid(), pid()) -> true.
+-spec add_entry(any(), any(), any(), pid(), pid()) -> ok.
 add_entry(Routes, OwnerJID, ForeignJID, ClientSession, ServerSession) ->
     Ref = make_ref(),
     ets:insert(Routes, {exmpp_jid:to_list(OwnerJID), 
@@ -148,18 +140,19 @@ add_entry(Routes, OwnerJID, ForeignJID, ClientSession, ServerSession) ->
     ets:insert(Routes, {exmpp_jid:bare_to_list(ForeignJID), 
                         exmpp_jid:bare(OwnerJID), 
                         {server, ServerSession}, 
-                        Ref}).
+                        Ref}),
+    ok.
 
 -spec get_entry(route_db(), any()) -> list().
 get_entry(Routes, Key) when is_list(Key) ->
     ets:lookup(Routes, Key).
 
--spec del_entry(route_db(), list()) -> route_db().
+-spec del_entry(route_db(), list()) -> ok.
 del_entry(Routes, [Key|Keys]) when is_reference(Key) ->
     ets:match_delete(Routes, {'_', '_', '_', Key}),
     del_entry(Routes, Keys);
-del_entry(Routes, []) ->
-    Routes.
+del_entry(_Routes, []) ->
+    ok.
 
 -spec make(list(), any(), any(), list(), list(), list()) -> list().
 make([Record|Tail], From, To, FromStr, ToStr, Acc) ->
