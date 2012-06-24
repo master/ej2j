@@ -30,7 +30,7 @@ get_app_env(Opt, Default) ->
 -spec init(any()) -> {ok, {tuple(), [tuple()]}}.
 init([]) ->
     Component = {ej2j_comp, {ej2j_comp, start_link, []},
-                 permanent, 10, worker, [ej2j_comp]},
+                 permanent, 1000, worker, [ej2j_comp]},
     RoutesDB = {ej2j_route, {ej2j_route, start_link, []},
-                 permanent, 10, worker, [ej2j_route]},
-    {ok, {{one_for_one, 1, 10}, [Component, RoutesDB]}}.
+                 permanent, 1000, worker, [ej2j_route]},
+    {ok, {{one_for_one, 10, 1}, [Component, RoutesDB]}}.
