@@ -51,49 +51,39 @@ init([]) ->
 handle_call(stop, _From, State) ->
     exmpp_component:stop(State#state.session),
     {stop, normal, ok, State};
-
 handle_call({start_client, FromJID, ForeignJID, Password}, _From,
-            #state{session=ServerS} = State) ->
-    try
-	{ok, {ToJID, ClientS}} = client_spawn(ForeignJID, Password),
-	ok = ej2j_route:add(FromJID, ToJID, ClientS, ServerS),
-	{reply, {ok, ClientS}, State}
-    catch
-	_Class:Error -> {reply, {error, Error}, State}
+            #state{session = ServerS} = State) ->
+    case client_spawn(ForeignJID, Password) of
+	{ok, {ToJID, ClientS}} -> 
+            ok = ej2j_route:add(FromJID, ToJID, ClientS, ServerS),
+            {reply, {ok, ClientS}, State};
+        {error, Error} ->
+            {reply, {error, Error}, State}
     end;
-
 handle_call({get_routes, FromJID, ToJID}, _From, State) ->
     Routes = ej2j_route:get(FromJID, ToJID),
     {reply, Routes, State};
-
-handle_call(get_state, _From, #state{session=ServerS} = State) ->
+handle_call(get_state, _From, #state{session = ServerS} = State) ->
     {reply, {state, {session, ServerS}}, State};
-
 handle_call(_Msg, _From, State) ->
     {reply, unexpected, State}.
 
 -spec handle_info(any(), #state{}) -> {noreply, #state{}}.
-handle_info(#received_packet{} = Packet, #state{session=S} = State) ->
+handle_info(#received_packet{} = Packet, #state{session = S} = State) ->
     error_logger:info_msg("Packet received: ~p~n", [Packet]),
     spawn_link(fun() -> process_received_packet(S, Packet) end),
     {noreply, State};
-
-handle_info(#received_packet{packet_type=Type, raw_packet=Packet}, State) ->
+handle_info(#received_packet{packet_type = Type, raw_packet = Packet}, State) ->
     error_logger:warning_msg("Unknown packet received(~p): ~p~n", [Type, Packet]),
     {noreply, State};
-
-%% component has died
-handle_info({'EXIT', ServerS, _}, #state{session=ServerS} = State) ->
+handle_info({'EXIT', ServerS, _}, #state{session = ServerS} = State) ->
     timer:sleep(?RESTART_DELAY),
     NewServerS = ej2j_helper:component(),
     ej2j_route:free(),
-    {noreply, State#state{session=NewServerS}};
-
-%% one of the user sessions died
+    {noreply, State#state{session = NewServerS}};
 handle_info({'EXIT', Pid, _}, State) ->
     ej2j_route:del(Pid),
     {noreply, State};
-
 handle_info(_Msg, State) ->
     {noreply, State}.
 
@@ -117,12 +107,10 @@ process_received_packet(Session,
     #received_packet{type_attr=Type, raw_packet = IQ} = Packet,
     NS = exmpp_xml:get_ns_as_atom(exmpp_iq:get_payload(IQ)),
     process_iq(Session, Type, NS, IQ);
-
 process_received_packet(Session, 
                         #received_packet{packet_type = 'presence'} = Packet) ->
     #received_packet{raw_packet = Presence} = Packet,
     process_presence(Session, Presence);
-
 process_received_packet(Session, 
                         #received_packet{packet_type = 'message'} = Packet) ->
     #received_packet{raw_packet = Message} = Packet,
@@ -134,16 +122,14 @@ process_received_packet(Session,
 process_iq(Session, "get", ?NS_DISCO_INFO, IQ) ->
     Result = exmpp_iq:result(IQ, ej2j_helper:disco_info()),
     send_packet(Session, Result);
-
 process_iq(Session, "get", ?NS_DISCO_ITEMS, IQ) ->
     Query = exmpp_xml:element(?NS_DISCO_ITEMS, 'query', [], []),
     Result = exmpp_iq:result(IQ, Query),
     send_packet(Session, Result);
-
 process_iq(_Session, "result", ?NS_ROSTER, IQ) ->
     Sender = exmpp_stanza:get_sender(IQ),
     Recipient = exmpp_stanza:get_recipient(IQ),
-    route_update(Sender, Recipient),
+    ok = update_route(Sender, Recipient),
     Component = list_to_binary(ej2j:get_app_env(component, ?COMPONENT)),
     Roster = exmpp_xml:get_element_by_ns(IQ, ?NS_ROSTER),
     Items = lists:map(
@@ -162,11 +148,9 @@ process_iq(_Session, "result", ?NS_ROSTER, IQ) ->
     NewRoster = exmpp_xml:set_children(Roster, Items),
     NewIQ = exmpp_xml:set_children(IQ, [NewRoster]),
     process_generic(NewIQ);
-
 process_iq(Session, "get", ?NS_INBAND_REGISTER, IQ) ->
     Result = exmpp_iq:result(IQ, ej2j_helper:inband_register()),
     send_packet(Session, Result);
-
 process_iq(Session, "set", ?NS_INBAND_REGISTER, IQ) ->
     SenderJID = exmpp_jid:parse(exmpp_stanza:get_sender(IQ)),
     try
@@ -185,7 +169,6 @@ process_iq(Session, "set", ?NS_INBAND_REGISTER, IQ) ->
         _Class:_Error ->
 	    send_packet(Session, exmpp_iq:error(IQ, forbidden))
     end;
-
 process_iq(_Session, _Type, _NS, IQ) ->
     process_generic(IQ).
 
@@ -201,15 +184,28 @@ process_message(_Session, Message) ->
 process_generic(Packet) ->
     Sender = exmpp_stanza:get_sender(Packet),
     Recipient = exmpp_stanza:get_recipient(Packet),
-    route_update(Sender, Recipient),
-    if (Sender == undefined) orelse (Recipient == undefined) ->
-            ok;
-       true -> 
-            From = exmpp_jid:parse(Sender),
-            To = exmpp_jid:parse(Recipient),
-            Routes = get_routes(From, To),
-            route_packet(Routes, Packet)
+    ok = update_route(Sender, Recipient),
+    ok = route_packet(Sender, Recipient, Packet).
+
+-spec update_route(binary(), binary()) -> ok.
+update_route(Sender, Recipient) ->
+    case exmpp_jid:domain(exmpp_jid:parse(Sender)) of
+        <<"chat.facebook.com">> ->
+            New = binary_to_list(Recipient),
+            [Old, _, _] = string:tokens(New, "_"),
+            ej2j_route:update(Old, New);
+        _Else -> ok
     end.
+
+-spec route_packet(binary() | undefined, binary() | undefined, #xmlel{}) -> ok.
+route_packet(Sender, Recipient, Packet) when Sender =/= undefined,
+                                              Recipient =/= undefined ->    
+    From = exmpp_jid:parse(Sender),
+    To = exmpp_jid:parse(Recipient),
+    Routes = get_routes(From, To),
+    route_packet(Routes, Packet);
+route_packet(_Sender, _Recipient, _Packet) -> 
+    ok.
 
 -spec route_packet(list(), #xmlel{}) -> ok.
 route_packet([{{client, Session}, NewFrom, NewTo}|Tail], Packet) ->
@@ -225,13 +221,12 @@ route_packet([{{server, Session}, NewFrom, NewTo}|Tail], Packet) ->
 route_packet([], _Packet) ->
     ok.
 
-%% Various helpers
-
 -spec send_packet(pid(), #xmlel{}) -> ok.
 send_packet(Session, El) ->
     exmpp_component:send_packet(Session, El).
 
--spec client_spawn(list(), list()) -> {tuple(), pid()} | false.
+-spec client_spawn(list(), list()) -> {ok, {exmpp_jid:jid(), pid()}} |
+                                      {error, any()}.
 client_spawn(JID, Password) ->
     try
         [User, Domain] = string:tokens(JID, "@"),
@@ -241,17 +236,7 @@ client_spawn(JID, Password) ->
         Connect = exmpp_session:connect_TCP(Session, Domain, 5222),
         ok = element(1, Connect),
         {ok, FullJID} = exmpp_session:login(Session, "DIGEST-MD5"),
-	{ok, {FullJID, Session}}
+        {ok, {FullJID, Session}}
     catch
-	_Class:Error -> {error, Error}
-    end.
-
--spec route_update(binary(), binary()) -> ok.
-route_update(Sender, Recipient) ->
-    case exmpp_jid:domain(exmpp_jid:parse(Sender)) of
-        <<"chat.facebook.com">> ->
-            New = binary_to_list(Recipient),
-            [Old, _, _] = string:tokens(New, "_"),
-            ej2j_route:update(Old, New);
-        _Else -> ok
+        _Class:Error -> {error, Error}
     end.
