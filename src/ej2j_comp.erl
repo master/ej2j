@@ -10,7 +10,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
 	 code_change/3]).
 
--define(RESTART_DELAY, 5000).
+-define(RESTART_DELAY, 1000).
+-define(CHECK_INTERVAL, 300000).
 
 -include_lib("exmpp/include/exmpp_client.hrl").
 -include_lib("exmpp/include/exmpp_xml.hrl").
@@ -19,12 +20,11 @@
 
 -include("ej2j.hrl").
 
--record(state, {session}).
-
-%% Public API
+-record(state, {session :: pid()}).
 
 -spec start_link() -> {ok, pid()}.
 start_link() ->
+    timer:sleep(?RESTART_DELAY),
     gen_server:start_link({local,?MODULE}, ?MODULE, [], []).
 
 -spec stop() -> ok.
@@ -35,16 +35,15 @@ stop() ->
 start_client(OwnerJID, ForeignJID, Password) ->
     gen_server:call(?MODULE, {start_client, OwnerJID, ForeignJID, Password}).
 
+-spec get_routes(exmpp_jid:jid(), exmpp_jid:jid()) -> any().
 get_routes(FromJID, ToJID) ->
     gen_server:call(?MODULE, {get_routes, FromJID, ToJID}).
-
-%% gen_server callbacks
 
 -spec init([]) -> {ok, #state{}}.
 init([]) ->
     process_flag(trap_exit, true),
-    Session = ej2j_helper:component(),
-    {ok, #state{session = Session}}.
+    erlang:send_after(0, self(), state),
+    {ok, #state{}}.
 
 -spec handle_call(any(), any(), #state{}) -> {reply, any(), #state{}} | 
                                              {stop, any(), any(), #state{}}.
@@ -63,26 +62,31 @@ handle_call({start_client, FromJID, ForeignJID, Password}, _From,
 handle_call({get_routes, FromJID, ToJID}, _From, State) ->
     Routes = ej2j_route:get(FromJID, ToJID),
     {reply, Routes, State};
-handle_call(get_state, _From, #state{session = ServerS} = State) ->
-    {reply, {state, {session, ServerS}}, State};
 handle_call(_Msg, _From, State) ->
     {reply, unexpected, State}.
 
 -spec handle_info(any(), #state{}) -> {noreply, #state{}}.
-handle_info(#received_packet{} = Packet, #state{session = S} = State) ->
+handle_info(#received_packet{} = Packet, #state{session = Session} = State) ->
     error_logger:info_msg("Packet received: ~p~n", [Packet]),
-    spawn_link(fun() -> process_received_packet(S, Packet) end),
+    spawn_link(fun() -> process_received_packet(Session, Packet) end),
     {noreply, State};
 handle_info(#received_packet{packet_type = Type, raw_packet = Packet}, State) ->
     error_logger:warning_msg("Unknown packet received(~p): ~p~n", [Type, Packet]),
     {noreply, State};
-handle_info({'EXIT', ServerS, _}, #state{session = ServerS} = State) ->
+handle_info({'EXIT', Server, _}, #state{session = Server} = State) ->
     timer:sleep(?RESTART_DELAY),
-    NewServerS = ej2j_helper:component(),
+    Session = ej2j_helper:component(),
     ej2j_route:free(),
-    {noreply, State#state{session = NewServerS}};
+    {noreply, State#state{session = Session}};
 handle_info({'EXIT', Pid, _}, State) ->
     ej2j_route:del(Pid),
+    {noreply, State};
+handle_info(state, #state{session = undefined} = State) ->
+    erlang:send_after(?CHECK_INTERVAL, ?MODULE, state),
+    Session = ej2j_helper:component(),
+    {noreply, State#state{session = Session}};
+handle_info(state, State) ->
+    erlang:send_after(?CHECK_INTERVAL, ?MODULE, state),
     {noreply, State};
 handle_info(_Msg, State) ->
     {noreply, State}.
