@@ -31,7 +31,7 @@ start_link() ->
 stop() ->
     gen_server:call(?MODULE, stop).
 
--spec start_client(tuple(), list(), list()) -> ok.
+-spec start_client(tuple(), list(), list()) -> {ok, pid()} | {error, any()}.
 start_client(OwnerJID, ForeignJID, Password) ->
     gen_server:call(?MODULE, {start_client, OwnerJID, ForeignJID, Password}).
 
@@ -55,11 +55,11 @@ handle_call(stop, _From, State) ->
 handle_call({start_client, FromJID, ForeignJID, Password}, _From,
             #state{session=ServerS} = State) ->
     try
-	{ToJID, ClientS} = client_spawn(ForeignJID, Password),
+	{ok, {ToJID, ClientS}} = client_spawn(ForeignJID, Password),
 	ok = ej2j_route:add(FromJID, ToJID, ClientS, ServerS),
-	{reply, ClientS, State}
+	{reply, {ok, ClientS}, State}
     catch
-	_Class:_Error -> {reply, false, State}
+	_Class:Error -> {reply, {error, Error}, State}
     end;
 
 handle_call({get_routes, FromJID, ToJID}, _From, State) ->
@@ -175,7 +175,7 @@ process_iq(Session, "set", ?NS_INBAND_REGISTER, IQ) ->
 	Form = ej2j_helper:form_parse(FormElement),
 	JID = ej2j_helper:form_field(Form, <<"jid">>),
 	Password = ej2j_helper:form_field(Form, <<"password">>),
-	UserSession = start_client(SenderJID, JID, Password),
+	{ok, UserSession} = start_client(SenderJID, JID, Password),
         Status = exmpp_presence:set_status(exmpp_presence:available(), undefined),
         Roster = exmpp_client_roster:get_roster(),
         send_packet(Session, exmpp_iq:result(IQ)),
@@ -202,7 +202,7 @@ process_generic(Packet) ->
     Sender = exmpp_stanza:get_sender(Packet),
     Recipient = exmpp_stanza:get_recipient(Packet),
     route_update(Sender, Recipient),
-    if (Sender == undefined) or (Recipient == undefined) ->
+    if (Sender == undefined) orelse (Recipient == undefined) ->
             ok;
        true -> 
             From = exmpp_jid:parse(Sender),
@@ -241,9 +241,9 @@ client_spawn(JID, Password) ->
         Connect = exmpp_session:connect_TCP(Session, Domain, 5222),
         ok = element(1, Connect),
         {ok, FullJID} = exmpp_session:login(Session, "DIGEST-MD5"),
-	{FullJID, Session}
+	{ok, {FullJID, Session}}
     catch
-	_Class:_Error -> false
+	_Class:Error -> {error, Error}
     end.
 
 -spec route_update(binary(), binary()) -> ok.
