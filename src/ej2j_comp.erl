@@ -32,8 +32,8 @@ stop() ->
     gen_server:call(?MODULE, stop).
 
 -spec start_client(tuple(), list(), list()) -> {ok, pid()} | {error, any()}.
-start_client(OwnerJID, ForeignJID, Password) ->
-    gen_server:call(?MODULE, {start_client, OwnerJID, ForeignJID, Password}).
+start_client(OwnerJID, ForeignJID, Creds) ->
+    gen_server:call(?MODULE, {start_client, OwnerJID, ForeignJID, Creds}).
 
 -spec get_routes(exmpp_jid:jid(), exmpp_jid:jid()) -> any().
 get_routes(FromJID, ToJID) ->
@@ -50,9 +50,10 @@ init([]) ->
 handle_call(stop, _From, State) ->
     exmpp_component:stop(State#state.session),
     {stop, normal, ok, State};
-handle_call({start_client, FromJID, ForeignJID, Password}, _From,
+handle_call({start_client, FromJID, ForeignJID, Creds}, _From,
             #state{session = ServerS} = State) ->
-    case client_spawn(ForeignJID, Password) of
+    [User, Domain] = string:tokens(ForeignJID, "@"),
+    case client_spawn(User, Domain, Creds) of
 	{ok, {ToJID, ClientS}} -> 
             ok = ej2j_route:add(FromJID, ToJID, ClientS, ServerS),
             {reply, {ok, ClientS}, State};
@@ -229,17 +230,24 @@ route_packet([], _Packet) ->
 send_packet(Session, El) ->
     exmpp_component:send_packet(Session, El).
 
--spec client_spawn(list(), list()) -> {ok, {exmpp_jid:jid(), pid()}} |
-                                      {error, any()}.
-client_spawn(JID, Password) ->
+-spec client_spawn(list(), list(), list()) -> {ok, {exmpp_jid:jid(), pid()}} |
+                                             {error, any()}.
+client_spawn(User, Domain, Creds) ->
     try
-        [User, Domain] = string:tokens(JID, "@"),
         FullJID = exmpp_jid:make(User, Domain, random),
         Session = exmpp_session:start_link({1, 0}),
-        exmpp_session:auth_info(Session, FullJID, Password),
+        case Domain of
+            "chat.facebook.com" ->
+                [Token, AppId] = string:tokens(Creds, ";"),
+                exmpp_session:auth_info(Session, FullJID, Token, AppId),
+                Method = "X-FACEBOOK-PLATFORM";
+            _Else ->
+                exmpp_session:auth_info(Session, FullJID, Creds),
+                Method = "DIGEST-MD5"
+        end,
         Connect = exmpp_session:connect_TCP(Session, Domain, 5222),
         ok = element(1, Connect),
-        {ok, FullJID} = exmpp_session:login(Session, "DIGEST-MD5"),
+        {ok, FullJID} = exmpp_session:login(Session, Method),
         {ok, {FullJID, Session}}
     catch
         _Class:Error -> {error, Error}
