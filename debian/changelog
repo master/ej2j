@@ -1,3 +1,9 @@
+ej2j (0.0.4-1) unstable; urgency=low
+
+  * Add Facebook OAuth support
+
+ -- Oleg Smirnov <oleg.smirnov@gmail.com>  Tue, 17 Jul 2012 18:24:50 +0300
+
 ej2j (0.0.3-1) unstable; urgency=low
 
   * Add periodic connection check
